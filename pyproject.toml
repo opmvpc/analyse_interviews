@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "analyse-interviews"
+version = "0.1.0"
+description = "Analyse qualitative d'interviews à l'aide de gpt"
+authors = ["opmvpc <thibsix@outlook.be>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+openai = "^1.40.1"
+pandas = "^2.2.2"
+python-docx = "^1.1.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

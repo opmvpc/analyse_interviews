@@ -1,78 +1,138 @@
-# Projet d'Analyse Qualitative d'Entretiens avec GPT-4o
+import sqlite3
+import pandas as pd
+from rich.console import Console
+from rich.table import Table
 
-Ce projet vise à analyser qualitativement des entretiens en utilisant la méthode de codage déductif, en se basant sur des segments textuels extraits de documents Word. L'analyse est effectuée via l'API GPT-4o, et les résultats sont stockés dans une base de données SQLite pour une exploration et une visualisation ultérieure.
+# Connexion à la base de données
 
-## Organisation du Projet
+db_path = "results.db"
+conn = sqlite3.connect(db_path)
 
-Le projet est structuré de la manière suivante :
+# Initialisation de la console Rich
 
-├── data/
-│ ├── cleaned/ # Contient les fichiers JSON des segments extraits et nettoyés
-│ ├── outputs_YYYYMMDD_HHMMSS/ # Dossiers contenant les résultats des analyses précédentes
-│ └── Entretien_NomIntervenant.docx # Fichiers Word contenant les entretiens originaux
-│
-├── .env # Fichier d'environnement contenant la clé API OpenAI
-├── main.py # Script principal pour effectuer l'analyse des segments
-├── results.py # Script pour visualiser et explorer les résultats stockés en base de données
-├── requirements.txt # Liste des dépendances Python nécessaires pour le projet
-└── README.md # Ce fichier
+console = Console()
 
-markdown
+# Extraire l'ID du run depuis la base de données
 
+run_id_query = "SELECT DISTINCT run_id FROM analysis_results LIMIT 1;"
+run_id = pd.read_sql_query(run_id_query, conn).iloc[0, 0]
 
-## Prérequis
+# Calcul du LLM quotient par code
 
-Avant de pouvoir exécuter les scripts, assurez-vous d'avoir les éléments suivants :
+llmq_query = """
+SELECT
+code_name,
+COUNT(_) AS total_iterations,
+SUM(CASE WHEN est_present = 1 THEN 1 ELSE 0 END) AS positive_responses,
+SUM(CASE WHEN est_present = 1 THEN 1 ELSE 0 END) _ 1.0 / COUNT(\*) AS LLMq
+FROM
+analysis_results
+GROUP BY
+code_name
+ORDER BY
+LLMq DESC;
+"""
+llmq_df = pd.read_sql_query(llmq_query, conn)
 
-1. **Python 3.8+** : Le projet nécessite Python 3.8 ou supérieur.
-2. **Dépendances Python** : Installez les dépendances listées dans `requirements.txt` en utilisant la commande suivante :
-   ```bash
-   pip install -r requirements.txt
+# Afficher le LLM quotient par code dans un tableau
 
-    Clé API OpenAI : Ajoutez votre clé API OpenAI dans un fichier .env à la racine du projet sous la forme suivante :
+llmq_table = Table(title="LLM Quotient par Code")
+llmq_table.add_column("Code Name", justify="left", style="cyan", no_wrap=True)
+llmq_table.add_column("Total Iterations", justify="right", style="magenta")
+llmq_table.add_column("Positive Responses", justify="right", style="green")
+llmq_table.add_column("LLMq", justify="right", style="yellow")
 
-    makefile
+for \_, row in llmq_df.iterrows():
+llmq_table.add_row(
+row["code_name"],
+str(row["total_iterations"]),
+str(row["positive_responses"]),
+f"{row['LLMq']:.2f}"
+)
 
-    OPENAI_API_KEY=your_api_key_here
+console.print(llmq_table)
+print("\n")
 
-Utilisation des Scripts
-1. main.py
+# Nom du fichier résultat avec l'ID du run
 
-Ce script est utilisé pour analyser les segments des entretiens. Les résultats sont enregistrés dans une base de données SQLite.
-Arguments
+output*filename = f"resultats*{run_id}.md"
 
-    --analyze-all : Si ce paramètre est fourni, le script analysera tous les segments de chaque entretien. Sinon, il analysera un sous-ensemble aléatoire de segments.
+# Ouvrir le fichier de sortie en mode écriture (écrasement)
 
-Exécution
+with open(output_filename, "w") as md_file:
 
-Pour analyser tous les segments de chaque entretien avec 10 itérations par segment, exécutez la commande suivante :
+    # Ajouter le tableau LLMq au fichier Markdown
+    md_file.write("# LLM Quotient par Code\n\n")
 
-bash
+    # Ajouter les données du tableau au fichier markdown
+    md_file.write("| Code Name | Total Iterations | Positive Responses | LLMq |\n")
+    md_file.write("| --- | --- | --- | --- |\n")
 
-python3 main.py --analyze-all
+    for _, row in llmq_df.iterrows():
+        md_file.write(f"| {row['code_name']} | {row['total_iterations']} | {row['positive_responses']} | {row['LLMq']:.2f} |\n")
 
-Pour analyser uniquement un sous-ensemble aléatoire de segments, exécutez :
+    md_file.write("\n\n")
 
-bash
+    # Identifier les phrases avec au moins 3 correspondances positives, triées par intervenant et limitées à 5 par code
+    positive_phrases_query = """
+    WITH ranked_phrases AS (
+        SELECT
+            r.segment_text,
+            r.code_name,
+            COUNT(*) AS positive_count,
+            r.intervenant_name,
+            ROW_NUMBER() OVER (PARTITION BY r.intervenant_name, r.code_name ORDER BY COUNT(*) DESC) AS rank
+        FROM
+            analysis_results r
+        WHERE
+            est_present = 1
+        GROUP BY
+            r.segment_text, r.code_name, r.intervenant_name
+    )
+    SELECT
+        segment_text,
+        code_name,
+        positive_count,
+        intervenant_name
+    FROM
+        ranked_phrases
+    WHERE
+        rank <= 5 AND positive_count >= 3
+    ORDER BY
+        intervenant_name, code_name, positive_count DESC;
+    """
+    positive_phrases_df = pd.read_sql_query(positive_phrases_query, conn)
 
-python3 main.py
+    # Afficher les segments de texte avec le plus de correspondances positives triées par intervenant et par code
+    grouped = positive_phrases_df.groupby(['intervenant_name', 'code_name'])
 
-Les résultats seront sauvegardés dans une base de données SQLite.
-2. results.py
+    for (intervenant_name, code_name), group in grouped:
+        console.print(f"\n[bold]Intervenant: {intervenant_name} - Code: {code_name}[/bold]")
+        phrases_table = Table(show_header=True, header_style="bold magenta")
+        phrases_table.add_column("Positive Count", justify="right", style="green")
+        phrases_table.add_column("Segment Text", style="white")
 
-Ce script permet de visualiser les résultats de l'analyse, notamment les segments les plus pertinents pour chaque code.
-Affichage des Résultats
+        # Écrire le titre de l'intervenant et du code dans le fichier markdown
+        md_file.write(f"## Intervenant: {intervenant_name} - Code: {code_name}\n\n")
 
-Le script extrait les données de la base SQLite et affiche les résultats dans la console en utilisant un framework de tableau pour une meilleure lisibilité.
+        # Préparer le tableau markdown pour les segments
+        md_file.write("| Positive Count | Segment Text |\n")
+        md_file.write("| --- | --- |\n")
 
-Pour exécuter ce script, utilisez simplement :
+        for _, row in group.iterrows():
+            phrases_table.add_row(
+                str(row["positive_count"]),
+                row["segment_text"]
+            )
 
-bash
+            # Écrire chaque ligne du tableau dans le fichier markdown
+            md_file.write(f"| {row['positive_count']} | {row['segment_text']} |\n")
 
-python3 results.py
+        console.print(phrases_table)
+        md_file.write("\n")  # Ajouter un saut de ligne après chaque groupe
 
-Cela affichera les résultats triés par code et par intervenant.
-Auteurs
+conn.close()
 
-Ce projet a été développé pour l'analyse qualitative de données d'entretiens en utilisant des modèles de langage GPT-4o. Les scripts ont été conçus pour automatiser l'analyse et fournir une base de données exploitable pour l'exploration des résultats.
-Licence
+# Afficher le nom du fichier généré
+
+print(f"Résultats enregistrés dans {output_filename}")

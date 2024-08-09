@@ -3,11 +3,20 @@ import sqlite3
 import uuid
 from datetime import datetime
 from dotenv import load_dotenv
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, Field
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import random
 import json
 from llm.llm_implementations import LLMFactory
+import logging
+import time
+from collections import Counter
+
+start_time = time.time()
+stats = Counter()
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -19,7 +28,7 @@ llm = LLMFactory.create_llm(llm_model)
 
 # Define the JSON output schema using Pydantic (in French and camelCase without accents)
 class CodeScratchpad(BaseModel):
-    carnet_de_notes: str
+    carnet_de_notes: str = Field(min_length=30)
     est_present: bool
 
 class CodeResult(BaseModel):
@@ -47,20 +56,24 @@ def analyze_segment(segment):
 
     while attempt < max_retries:
         try:
-            result = llm.chat(messages=conversation_history + [{"role": "user", "content": segment}], response_format=CodeResult)
-            return result.dict()
+            logger.debug(f"Attempting to analyze segment: {segment[:50]}...")
+            result = llm.json(messages=conversation_history + [{"role": "user", "content": segment}], response_format=CodeResult)
+            logger.debug(f"Successfully analyzed segment. Result: {result}")
+            return result
 
-        except ValidationError as e:
+        except (ValueError, ValidationError) as e:
             attempt += 1
-            print(f"Attempt {attempt} failed: {e}. Output received: {result}")
-            conversation_history.append({"role": "assistant", "content": str(result)})
+            logger.error(f"Attempt {attempt} failed: {e}")
+            conversation_history.append({"role": "assistant", "content": str(e)})
             conversation_history.append({"role": "user", "content": f"Erreur rencontrée: {e}. Veuillez corriger le format de sortie et réessayer."})
 
         except Exception as e:
             attempt += 1
-            print(f"Attempt {attempt} failed: {e}")
+            logger.error(f"Unexpected error on attempt {attempt}: {e}")
 
+    logger.error(f"Failed to get a valid response after {max_retries} attempts")
     raise Exception(f"Failed to get a valid response after {max_retries} attempts")
+
 
 # Function to get random segments
 def get_random_segments(segments, count=5):
@@ -70,13 +83,13 @@ def get_random_segments(segments, count=5):
 def save_result_to_db(conn, run_id, segment, result, intervenant_name):
     cursor = conn.cursor()
 
-    for code_name, code_data in result.items():
+    for code_name, code_data in result.__dict__.items():  # Utiliser __dict__ au lieu de items()
         segment_id = str(uuid.uuid4())
 
         cursor.execute("""
             INSERT INTO analysis_results (id, run_id, segment_text, code_name, carnet_de_notes, est_present, intervenant_name)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (segment_id, run_id, segment, code_name, code_data['carnet_de_notes'], code_data['est_present'], intervenant_name))
+        """, (segment_id, run_id, segment, code_name, code_data.carnet_de_notes, code_data.est_present, intervenant_name))
 
     conn.commit()
 
@@ -123,19 +136,21 @@ def extract_intervenant_name(file_name):
 def process_task(task):
     segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations = task
     try:
+        log_progress(file_name, segment_index+1, total_segments, i+1, num_iterations)
         result = analyze_segment(segment)
         if result:
             conn = sqlite3.connect(db_path)
             save_result_to_db(conn, run_id, segment, result, intervenant_name)
             conn.close()
-            return (f"Successfully processed segment {segment_index+1}/{total_segments} "
-                    f"for file {file_name} during iteration {i+1}/{num_iterations}")
+            stats['segments_processed'] += 1
+            stats['iterations_completed'] += 1
+            return f"Successfully processed segment {segment_index+1}/{total_segments} for file {file_name} during iteration {i+1}/{num_iterations}"
         else:
-            return (f"Failed to process segment {segment_index+1}/{total_segments} "
-                    f"due to model refusal: {segment[:50]}...")
+            stats['segments_failed'] += 1
+            return f"Failed to process segment {segment_index+1}/{total_segments} due to model refusal: {segment[:50]}..."
     except Exception as e:
-        return (f"Failed to process segment {segment_index+1}/{total_segments} "
-                f"after retries: {e}")
+        stats['segments_failed'] += 1
+        return f"Failed to process segment {segment_index+1}/{total_segments} after retries: {e}"
 
 
 def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iterations=10, max_workers=10):
@@ -171,7 +186,23 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iter
         for future in as_completed(futures):
             print(future.result())
 
+    # Afficher les statistiques finales
+    end_time = time.time()
+    total_time = end_time - start_time
+    total_segments = stats['segments_processed'] + stats['segments_failed']
+    total_iterations = stats['iterations_completed']
 
+    print("\nStatistiques finales:")
+    print(f"Temps total d'exécution: {total_time:.2f} secondes")
+    print(f"Nombre total de segments analysés: {total_segments}")
+    print(f"Nombre total d'itérations: {total_iterations}")
+    print(f"Segments traités avec succès: {stats['segments_processed']}")
+    print(f"Segments échoués: {stats['segments_failed']}")
+    print(f"Taux de réussite: {stats['segments_processed']/total_segments*100:.2f}%")
+
+def log_progress(file_name, segment_index, total_segments, iteration, total_iterations):
+    elapsed_time = time.time() - start_time
+    logger.info(f"Temps écoulé: {elapsed_time:.2f}s - Fichier: {file_name} - Segment: {segment_index}/{total_segments} - Itération: {iteration}/{total_iterations}")
 
 if __name__ == "__main__":
     data_dir = find_most_recent_directory()

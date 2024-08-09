@@ -126,20 +126,24 @@ def extract_intervenant_name(file_name):
         return intervenant.split()[0]
 
 def process_task(task):
-    segment, file_name, db_path, run_id, intervenant_name, i = task
+    segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations = task
     try:
         result = analyze_segment(segment)
         if result:
             conn = sqlite3.connect(db_path)
             save_result_to_db(conn, run_id, segment, result, intervenant_name)
             conn.close()
-            return f"Successfully processed segment {i} for file {file_name}"
+            return (f"Successfully processed segment {segment_index+1}/{total_segments} "
+                    f"for file {file_name} during iteration {i+1}/{num_iterations}")
         else:
-            return f"Failed to process segment due to model refusal: {segment[:50]}..."
+            return (f"Failed to process segment {segment_index+1}/{total_segments} "
+                    f"due to model refusal: {segment[:50]}...")
     except Exception as e:
-        return f"Failed to process segment after retries: {e}"
+        return (f"Failed to process segment {segment_index+1}/{total_segments} "
+                f"after retries: {e}")
 
-def process_files(data_dir, db_path, analyze_all=False, num_segments=2, num_iterations=2, max_workers=5):
+
+def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iterations=10, max_workers=10):
     tasks = []
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -159,9 +163,10 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=2, num_iter
             run_id = str(uuid.uuid4())
             intervenant_name = extract_intervenant_name(file_name)
 
-            for segment in selected_segments:
+            total_segments = len(selected_segments)
+            for segment_index, segment in enumerate(selected_segments):
                 for i in range(num_iterations):
-                    tasks.append((segment, file_name, db_path, run_id, intervenant_name, i))
+                    tasks.append((segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations))
 
     conn.close()
 
@@ -170,6 +175,8 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=2, num_iter
         futures = [executor.submit(process_task, task) for task in tasks]
         for future in as_completed(futures):
             print(future.result())
+
+
 
 if __name__ == "__main__":
     data_dir = find_most_recent_directory()

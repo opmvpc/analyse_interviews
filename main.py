@@ -2,19 +2,20 @@ import os
 import sqlite3
 import uuid
 from datetime import datetime
-from openai import OpenAI
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import random
 import json
+from llm.llm_implementations import LLMFactory
 
 # Load environment variables
 load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
+llm_model = os.getenv("LLM_MODEL")
 
-# Initialize OpenAI client
-client = OpenAI(api_key=openai_api_key)
+# Initialize LLM
+llm = LLMFactory.create_llm(llm_model)
+
 
 # Define the JSON output schema using Pydantic (in French and camelCase without accents)
 class CodeScratchpad(BaseModel):
@@ -46,19 +47,13 @@ def analyze_segment(segment):
 
     while attempt < max_retries:
         try:
-            completion = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
-                messages=conversation_history + [{"role": "user", "content": segment}],
-                response_format=CodeResult
-            )
-
-            result = completion.choices[0].message.parsed
+            result = llm.chat(messages=conversation_history + [{"role": "user", "content": segment}], response_format=CodeResult)
             return result.dict()
 
         except ValidationError as e:
             attempt += 1
-            print(f"Attempt {attempt} failed: {e}. Output received: {completion.choices[0].message}")
-            conversation_history.append({"role": "assistant", "content": str(completion.choices[0].message)})
+            print(f"Attempt {attempt} failed: {e}. Output received: {result}")
+            conversation_history.append({"role": "assistant", "content": str(result)})
             conversation_history.append({"role": "user", "content": f"Erreur rencontrée: {e}. Veuillez corriger le format de sortie et réessayer."})
 
         except Exception as e:

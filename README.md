@@ -1,138 +1,78 @@
-import sqlite3
-import pandas as pd
-from rich.console import Console
-from rich.table import Table
+# Analyse des Interviews avec GPT-4o-mini
 
-# Connexion à la base de données
+Ce projet utilise GPT-4o-mini pour analyser des segments d'interviews en appliquant un codage déductif. Les résultats sont ensuite stockés dans une base de données SQLite et peuvent être visualisés à l'aide de scripts Python.
 
-db_path = "results.db"
-conn = sqlite3.connect(db_path)
+## Prérequis
 
-# Initialisation de la console Rich
+- Python 3.x
+- Modules Python : `sqlite3`, `pandas`, `rich`, `openai`, `dotenv`, `pydantic`
+- Clé API OpenAI (à placer dans un fichier `.env`)
 
-console = Console()
+## Installation
 
-# Extraire l'ID du run depuis la base de données
+1. Clonez ce dépôt :
 
-run_id_query = "SELECT DISTINCT run_id FROM analysis_results LIMIT 1;"
-run_id = pd.read_sql_query(run_id_query, conn).iloc[0, 0]
+   ```bash
+   git clone https://github.com/votre-utilisateur/analyse_interviews.git
+   cd analyse_interviews
+   ```
 
-# Calcul du LLM quotient par code
+2. Installez les dépendances Python :
 
-llmq_query = """
-SELECT
-code_name,
-COUNT(_) AS total_iterations,
-SUM(CASE WHEN est_present = 1 THEN 1 ELSE 0 END) AS positive_responses,
-SUM(CASE WHEN est_present = 1 THEN 1 ELSE 0 END) _ 1.0 / COUNT(\*) AS LLMq
-FROM
-analysis_results
-GROUP BY
-code_name
-ORDER BY
-LLMq DESC;
-"""
-llmq_df = pd.read_sql_query(llmq_query, conn)
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# Afficher le LLM quotient par code dans un tableau
+3. Créez un fichier `.env` à la racine du projet avec votre clé API OpenAI :
+   ```
+   OPENAI_API_KEY=your_openai_api_key
+   ```
 
-llmq_table = Table(title="LLM Quotient par Code")
-llmq_table.add_column("Code Name", justify="left", style="cyan", no_wrap=True)
-llmq_table.add_column("Total Iterations", justify="right", style="magenta")
-llmq_table.add_column("Positive Responses", justify="right", style="green")
-llmq_table.add_column("LLMq", justify="right", style="yellow")
+## Utilisation
 
-for \_, row in llmq_df.iterrows():
-llmq_table.add_row(
-row["code_name"],
-str(row["total_iterations"]),
-str(row["positive_responses"]),
-f"{row['LLMq']:.2f}"
-)
+### 1. Exécution de l'analyse
 
-console.print(llmq_table)
-print("\n")
+Le script principal `main.py` analyse les segments d'interviews en utilisant GPT-4o-mini. Les résultats sont enregistrés dans une base de données SQLite (`results.db`).
 
-# Nom du fichier résultat avec l'ID du run
+```bash
+python3 main.py
+```
 
-output*filename = f"resultats*{run_id}.md"
+### 2. Visualisation des Résultats
 
-# Ouvrir le fichier de sortie en mode écriture (écrasement)
+Utilisez le script `result.py` pour calculer et afficher les métriques LLMq et les segments de texte avec le plus de correspondances positives.
 
-with open(output_filename, "w") as md_file:
+```bash
+python3 result.py
+```
 
-    # Ajouter le tableau LLMq au fichier Markdown
-    md_file.write("# LLM Quotient par Code\n\n")
+### 3. Paramètres du Script
 
-    # Ajouter les données du tableau au fichier markdown
-    md_file.write("| Code Name | Total Iterations | Positive Responses | LLMq |\n")
-    md_file.write("| --- | --- | --- | --- |\n")
+Vous pouvez modifier les paramètres par défaut directement dans le script `main.py` :
 
-    for _, row in llmq_df.iterrows():
-        md_file.write(f"| {row['code_name']} | {row['total_iterations']} | {row['positive_responses']} | {row['LLMq']:.2f} |\n")
+- `num_segments`: Nombre de segments à sélectionner aléatoirement pour chaque fichier (par défaut : 4).
+- `num_iterations`: Nombre d'itérations par segment (par défaut : 10).
+- `max_workers`: Nombre de threads parallèles pour le traitement (par défaut : 10).
 
-    md_file.write("\n\n")
+## Structure des Fichiers
 
-    # Identifier les phrases avec au moins 3 correspondances positives, triées par intervenant et limitées à 5 par code
-    positive_phrases_query = """
-    WITH ranked_phrases AS (
-        SELECT
-            r.segment_text,
-            r.code_name,
-            COUNT(*) AS positive_count,
-            r.intervenant_name,
-            ROW_NUMBER() OVER (PARTITION BY r.intervenant_name, r.code_name ORDER BY COUNT(*) DESC) AS rank
-        FROM
-            analysis_results r
-        WHERE
-            est_present = 1
-        GROUP BY
-            r.segment_text, r.code_name, r.intervenant_name
-    )
-    SELECT
-        segment_text,
-        code_name,
-        positive_count,
-        intervenant_name
-    FROM
-        ranked_phrases
-    WHERE
-        rank <= 5 AND positive_count >= 3
-    ORDER BY
-        intervenant_name, code_name, positive_count DESC;
-    """
-    positive_phrases_df = pd.read_sql_query(positive_phrases_query, conn)
+- `main.py`: Script principal pour analyser les segments d'interviews.
+- `result.py`: Script pour visualiser les résultats de l'analyse.
+- `results.db`: Base de données SQLite contenant les résultats de l'analyse.
+- `data/`: Dossier contenant les fichiers JSON des interviews à analyser.
 
-    # Afficher les segments de texte avec le plus de correspondances positives triées par intervenant et par code
-    grouped = positive_phrases_df.groupby(['intervenant_name', 'code_name'])
+## Auteurs
 
-    for (intervenant_name, code_name), group in grouped:
-        console.print(f"\n[bold]Intervenant: {intervenant_name} - Code: {code_name}[/bold]")
-        phrases_table = Table(show_header=True, header_style="bold magenta")
-        phrases_table.add_column("Positive Count", justify="right", style="green")
-        phrases_table.add_column("Segment Text", style="white")
+- [Thibault Six](https://github.com/opmvpc)
 
-        # Écrire le titre de l'intervenant et du code dans le fichier markdown
-        md_file.write(f"## Intervenant: {intervenant_name} - Code: {code_name}\n\n")
+## Licence
 
-        # Préparer le tableau markdown pour les segments
-        md_file.write("| Positive Count | Segment Text |\n")
-        md_file.write("| --- | --- |\n")
+Le code de ce projet est sous licence Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0). Cela signifie que vous êtes libre de partager et d'adapter le code pour des usages non commerciaux, tant que vous attribuez le crédit approprié.
 
-        for _, row in group.iterrows():
-            phrases_table.add_row(
-                str(row["positive_count"]),
-                row["segment_text"]
-            )
+### Données
 
-            # Écrire chaque ligne du tableau dans le fichier markdown
-            md_file.write(f"| {row['positive_count']} | {row['segment_text']} |\n")
+Veuillez noter que les données utilisées dans ce projet ne sont pas libres de droit et ne peuvent pas être réutilisées, partagées ou distribuées sans autorisation explicite.
 
-        console.print(phrases_table)
-        md_file.write("\n")  # Ajouter un saut de ligne après chaque groupe
+Pour plus de détails sur la licence du code, veuillez consulter le fichier [LICENSE](LICENSE).
 
-conn.close()
-
-# Afficher le nom du fichier généré
-
-print(f"Résultats enregistrés dans {output_filename}")
+[![License: CC BY-NC 4.0](https://licensebuttons.net/l/by-nc/4.0/88x31.png)](https://creativecommons.org/licenses/by-nc/4.0/)

@@ -1,55 +1,72 @@
 import sqlite3
 import pandas as pd
 import random
+import os
+from datetime import datetime
 from rich.console import Console
 from rich.table import Table
 from rich.prompt import IntPrompt
 
 # Connexion à la base de données
-db_path = "results.db"
+db_path = "caca.db"
 conn = sqlite3.connect(db_path)
 
 # Initialisation de la console Rich
 console = Console()
 
+# Fonction pour récupérer les IDs de run
 def get_run_ids():
-    query = "SELECT DISTINCT run_id FROM analysis_results ORDER BY run_id DESC;"
-    return pd.read_sql_query(query, conn)['run_id'].tolist()
+    query = """
+    SELECT DISTINCT run_id, run_number, run_start_time
+    FROM analysis_results
+    ORDER BY run_start_time DESC;
+    """
+    return pd.read_sql_query(query, conn)
 
+# Fonction pour afficher le menu de sélection des runs
 def display_run_menu(run_ids):
     console.print("[bold]Sélectionnez un run à analyser:[/bold]")
-    for i, run_id in enumerate(run_ids, 1):
-        console.print(f"{i}. {run_id}")
+    for i, row in run_ids.iterrows():
+        run_id = row["run_id"]
+        run_number = row["run_number"]
+        run_start_time = row["run_start_time"]
+        console.print(f"{i+1}. Run #{run_number} - ID: {run_id} - Start Time: {run_start_time}")
 
-    choice = IntPrompt.ask("Entrez le numéro du run", choices=[str(i) for i in range(1, len(run_ids) + 1)])
-    return run_ids[choice - 1]
+    choice = IntPrompt.ask("Entrez le numéro du run", choices=[str(i+1) for i in range(len(run_ids))])
+    return run_ids.iloc[choice - 1]
 
+# Fonction pour obtenir une justification aléatoire
 def get_random_justification(run_id, segment_text, code_name):
     query = """
     SELECT carnet_de_notes
     FROM analysis_results
-    WHERE run_id = ? AND segment_text = ? AND code_name = ? AND est_present = 1
+    WHERE run_id = ? AND segment_text = ? AND code_name = ? AND present = 1
     ORDER BY RANDOM()
     LIMIT 1
     """
     result = pd.read_sql_query(query, conn, params=(run_id, segment_text, code_name))
     return result['carnet_de_notes'].iloc[0] if not result.empty else "Pas de justification disponible"
 
+# Fonction principale
 def main():
     run_ids = get_run_ids()
-    if not run_ids:
+    if run_ids.empty:
         console.print("[bold red]Aucun run trouvé dans la base de données.[/bold red]")
         return
 
-    selected_run_id = display_run_menu(run_ids)
+    selected_run = display_run_menu(run_ids)
+    selected_run_id = selected_run["run_id"]
+    run_number = selected_run["run_number"]
+    run_start_time = selected_run["run_start_time"]
 
     # Calcul du LLM quotient par code
     llmq_query = """
     SELECT
         code_name,
+        COUNT(DISTINCT segment_text) AS total_segments,
         COUNT(*) AS total_iterations,
-        SUM(CASE WHEN est_present = 1 THEN 1 ELSE 0 END) AS positive_responses,
-        SUM(CASE WHEN est_present = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS LLMq
+        SUM(CASE WHEN present = 1 THEN 1 ELSE 0 END) AS positive_responses,
+        SUM(CASE WHEN present = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS LLMq
     FROM
         analysis_results
     WHERE
@@ -64,6 +81,7 @@ def main():
     # Afficher le LLM quotient par code dans un tableau
     llmq_table = Table(title=f"LLM Quotient par Code pour le run {selected_run_id}")
     llmq_table.add_column("Code Name", justify="left", style="cyan", no_wrap=True)
+    llmq_table.add_column("Total Segments", justify="right", style="magenta")
     llmq_table.add_column("Total Iterations", justify="right", style="magenta")
     llmq_table.add_column("Positive Responses", justify="right", style="green")
     llmq_table.add_column("LLMq", justify="right", style="yellow")
@@ -71,6 +89,7 @@ def main():
     for _, row in llmq_df.iterrows():
         llmq_table.add_row(
             row["code_name"],
+            str(row["total_segments"]),
             str(row["total_iterations"]),
             str(row["positive_responses"]),
             f"{row['LLMq']:.2f}"
@@ -79,20 +98,39 @@ def main():
     console.print(llmq_table)
     print("\n")
 
-    # Nom du fichier résultat avec l'ID du run
-    output_filename = f"resultats_{selected_run_id}.md"
+    # Créer le dossier 'results' s'il n'existe pas
+    results_dir = "results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+
+    # Obtenir l'heure de fin
+    run_end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Nom du fichier résultat avec le numéro du run et la date/heure
+    output_filename = os.path.join(
+        results_dir,
+        f"resultats_{run_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    )
 
     # Ouvrir le fichier de sortie en mode écriture (écrasement)
     with open(output_filename, "w") as md_file:
+        # Ajouter les informations du run au début du fichier
+        md_file.write(f"# Résultats du Run #{run_number}\n\n")
+        md_file.write(f"**Run ID**: {selected_run_id}\n\n")
+        md_file.write(f"**Heure de début**: {run_start_time}\n\n")
+        md_file.write(f"**Heure de fin**: {run_end_time}\n\n")
+        md_file.write(f"**Total Segments**: {llmq_df['total_segments'].sum()}\n\n")
+        md_file.write(f"**Total Iterations**: {llmq_df['total_iterations'].sum()}\n\n\n")
+
         # Ajouter le tableau LLMq au fichier Markdown
-        md_file.write(f"# LLM Quotient par Code pour le run {selected_run_id}\n\n")
+        md_file.write(f"## LLM Quotient par Code pour le run {selected_run_id}\n\n")
 
         # Ajouter les données du tableau au fichier markdown
-        md_file.write("| Code Name | Total Iterations | Positive Responses | LLMq |\n")
-        md_file.write("| --- | --- | --- | --- |\n")
+        md_file.write("| Code Name | Total Segments | Total Iterations | Positive Responses | LLMq |\n")
+        md_file.write("| --- | --- | --- | --- | --- |\n")
 
         for _, row in llmq_df.iterrows():
-            md_file.write(f"| {row['code_name']} | {row['total_iterations']} | {row['positive_responses']} | {row['LLMq']:.2f} |\n")
+            md_file.write(f"| {row['code_name']} | {row['total_segments']} | {row['total_iterations']} | {row['positive_responses']} | {row['LLMq']:.2f} |\n")
 
         md_file.write("\n\n")
 
@@ -108,7 +146,7 @@ def main():
             FROM
                 analysis_results r
             WHERE
-                est_present = 1 AND run_id = ?
+                present = 1 AND run_id = ?
             GROUP BY
                 r.segment_text, r.code_name, r.intervenant_name
         )

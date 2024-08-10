@@ -15,7 +15,8 @@ class OllamaLLM(LLMInterface):
 
     def json(self, messages, response_format):
         logger.debug(f"Sending request to Ollama with model: {self.model}")
-        response = ollama.chat(model=self.model, messages=messages)
+        response = ollama.chat(model=self.model, messages=messages, options={"temperature": 0, "format": "json"}
+)
         content = response['message']['content']
         logger.debug(f"Raw response from Ollama: {content}")
 
@@ -48,7 +49,8 @@ class OpenAILLM(LLMInterface):
         completion = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
-            response_model=response_format
+            response_model=response_format,
+            temperature=0
         )
         return completion.choices[0].message.model_dump()
 

@@ -30,20 +30,21 @@ llm = LLMFactory.create_llm(llm_model)
 
 # Define the JSON output schema using Pydantic (in French and camelCase without accents)
 class CodeScratchpad(BaseModel):
-    carnet_de_notes: str = Field(None, min_length=10)
-    est_present: bool
+    notes: str = Field(None, min_length=10)
+    present: bool
 
 class CodeResult(BaseModel):
-    gain_de_temps: CodeScratchpad
-    augmentation_productivite: CodeScratchpad
-    autonomie: CodeScratchpad
-    propriete_du_contenu: CodeScratchpad
-    biais_culturels: CodeScratchpad
-    correction_des_biais: CodeScratchpad
-    engagement_des_etudiants: CodeScratchpad
-    amelioration_des_pratiques_d_enseignement: CodeScratchpad
-    innovation: CodeScratchpad
-    nouvelles_methodes_d_enseignement: CodeScratchpad
+    tps_gagne: CodeScratchpad  # gain_de_temps
+    prod_aug: CodeScratchpad  # augmentation_productivite
+    auto: CodeScratchpad  # autonomie
+    prop_cont: CodeScratchpad  # propriete_du_contenu
+    biais_cult: CodeScratchpad  # biais_culturels
+    corr_biais: CodeScratchpad  # correction_des_biais
+    eng_etu: CodeScratchpad  # engagement_des_etudiants
+    prat_am: CodeScratchpad  # amelioration_des_pratiques_d_enseignement
+    inno: CodeScratchpad  # innovation
+    nouv_meth: CodeScratchpad  # nouvelles_methodes_d_enseignement
+
 
 # Function to analyze a segment using GPT-4o-mini with Structured Outputs
 def analyze_segment(segment):
@@ -114,8 +115,16 @@ def extract_intervenant_name(file_name):
     else:
         return intervenant.split()[0]
 
+def get_run_number(cursor):
+    cursor.execute("SELECT MAX(run_number) FROM analysis_results")
+    result = cursor.fetchone()[0]
+    if result:
+        return result + 1
+    else:
+        return 1
+
 def process_task(task):
-    segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations = task
+    segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations, run_number, run_start_time = task
     try:
         log_progress(file_name, segment_index+1, total_segments, i+1, num_iterations)
         result = analyze_segment(segment)
@@ -139,6 +148,10 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iter
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
+    run_id = str(uuid.uuid4())
+    run_number = get_run_number(cursor)
+    run_start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Exemple de run_start_time
+
     for file_name in os.listdir(data_dir):
         if file_name.endswith('.json'):
             file_path = os.path.join(data_dir, file_name)
@@ -151,13 +164,12 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iter
             else:
                 selected_segments = get_random_segments(segments, num_segments)
 
-            run_id = str(uuid.uuid4())
             intervenant_name = extract_intervenant_name(file_name)
 
             total_segments = len(selected_segments)
             for segment_index, segment in enumerate(selected_segments):
                 for i in range(num_iterations):
-                    tasks.append((segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations))
+                    tasks.append((segment, file_name, db_path, run_id, intervenant_name, i, segment_index, total_segments, num_iterations, run_number, run_start_time))
 
     conn.close()
 

@@ -13,6 +13,15 @@ import time
 from collections import Counter
 from prompt import system_prompt, user_prompt_1, user_prompt_2, user_prompt_3, user_prompt_4, user_prompt_5, user_prompt_6, assistant_response_1, assistant_response_2, assistant_response_3, assistant_response_4_initial, assistant_response_4_corrected, assistant_response_5,assistant_response_6, validation_error
 from db import save_result_to_db, initialize_db
+from multiprocessing import Manager
+
+
+manager = Manager()
+stats = manager.dict({
+    'segments_processed': 0,
+    'segments_failed': 0,
+    'iterations_completed': 0
+})
 
 start_time = time.time()
 stats = Counter()
@@ -30,7 +39,7 @@ llm = LLMFactory.create_llm(llm_model)
 
 # Define the JSON output schema using Pydantic (in French and camelCase without accents)
 class CodeScratchpad(BaseModel):
-    notes: str = Field(None, min_length=10)
+    notes: str
     present: bool
 
 class CodeResult(BaseModel):
@@ -132,16 +141,12 @@ def process_task(task):
             conn = sqlite3.connect(db_path)
             save_result_to_db(conn, run_id, segment, result, intervenant_name, run_number, run_start_time)
             conn.close()
-            stats['segments_processed'] += 1
-            stats['iterations_completed'] += 1
-            return f"Successfully processed segment {segment_index+1}/{total_segments} for file {file_name} during iteration {i+1}/{num_iterations}"
+            return 1, 0, 1  # segments_processed, segments_failed, iterations_completed
         else:
-            stats['segments_failed'] += 1
-            return f"Failed to process segment {segment_index+1}/{total_segments} due to model refusal: {segment[:50]}..."
+            return 0, 1, 1
     except Exception as e:
-        stats['segments_failed'] += 1
-        return f"Failed to process segment {segment_index+1}/{total_segments} after retries: {e}"
-
+        logger.error(f"Failed to process segment {segment_index+1}/{total_segments} after retries: {e}")
+        return 0, 1, 1
 
 def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iterations=10, max_workers=10):
     tasks = []
@@ -150,12 +155,12 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iter
 
     run_id = str(uuid.uuid4())
     run_number = get_run_number(cursor)
-    run_start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Exemple de run_start_time
+    run_start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     for file_name in os.listdir(data_dir):
         if file_name.endswith('.json'):
             file_path = os.path.join(data_dir, file_name)
-            print(f"Processing {file_name}...")
+            logger.info(f"Processing {file_name}...")
             with open(file_path, 'r') as file:
                 segments = json.load(file)
 
@@ -173,12 +178,23 @@ def process_files(data_dir, db_path, analyze_all=False, num_segments=4, num_iter
 
     conn.close()
 
+    logger.info(f"Created {len(tasks)} tasks")
+
+    segments_processed = 0
+    segments_failed = 0
+    iterations_completed = 0
+
     # Process in parallel
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_task, task) for task in tasks]
         for future in as_completed(futures):
-            print(future.result())
+            sp, sf, ic = future.result()
+            segments_processed += sp
+            segments_failed += sf
+            iterations_completed += ic
+            print(f"Task completed. Processed: {sp}, Failed: {sf}, Iterations: {ic}")
 
+    return segments_processed, segments_failed, iterations_completed
 
 def log_progress(file_name, segment_index, total_segments, iteration, total_iterations):
     elapsed_time = time.time() - start_time
@@ -187,18 +203,20 @@ def log_progress(file_name, segment_index, total_segments, iteration, total_iter
 if __name__ == "__main__":
     data_dir = find_most_recent_directory()
     db_path = initialize_db()
-    process_files(data_dir, db_path, analyze_all=True)
+    segments_processed, segments_failed, iterations_completed = process_files(data_dir, db_path, analyze_all=True, num_segments=20, num_iterations=10, max_workers=16)
 
     # Afficher les statistiques finales
     end_time = time.time()
     total_time = end_time - start_time
-    total_segments = stats['segments_processed'] + stats['segments_failed']
-    total_iterations = stats['iterations_completed']
+    total_segments = segments_processed + segments_failed
 
     print("\nStatistiques finales:")
     print(f"Temps total d'exécution: {total_time:.2f} secondes")
     print(f"Nombre total de segments analysés: {total_segments}")
-    print(f"Nombre total d'itérations: {total_iterations}")
-    print(f"Segments traités avec succès: {stats['segments_processed']}")
-    print(f"Segments échoués: {stats['segments_failed']}")
-    print(f"Taux de réussite: {stats['segments_processed']/total_segments*100:.2f}%")
+    print(f"Nombre total d'itérations: {iterations_completed}")
+    print(f"Segments traités avec succès: {segments_processed}")
+    print(f"Segments échoués: {segments_failed}")
+    if total_segments > 0:
+        print(f"Taux de réussite: {segments_processed/total_segments*100:.2f}%")
+    else:
+        print("Taux de réussite: N/A (aucun segment traité)")

@@ -46,13 +46,13 @@ class OpenAILLM(LLMInterface):
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def json(self, messages, response_format):
-        completion = self.client.chat.completions.create(
+        completion = self.client.beta.chat.completions.parse(
             model=self.model,
             messages=messages,
-            response_model=response_format,
+            response_format=response_format,
             temperature=0
         )
-        return completion.choices[0].message.model_dump()
+        return completion.choices[0].message.parsed
 
 class LLMFactory:
     @staticmethod

@@ -47,12 +47,12 @@ class CodeResult(BaseModel):
     prod_aug: CodeScratchpad  # augmentation_productivite
     auto: CodeScratchpad  # autonomie
     prop_cont: CodeScratchpad  # propriete_du_contenu
-    biais_cult: CodeScratchpad  # biais_culturels
+    biais_err: CodeScratchpad  # biais_erreurs
     corr_biais: CodeScratchpad  # correction_des_biais
     eng_etu: CodeScratchpad  # engagement_des_etudiants
     prat_am: CodeScratchpad  # amelioration_des_pratiques_d_enseignement
-    inno: CodeScratchpad  # innovation
-    nouv_meth: CodeScratchpad  # nouvelles_methodes_d_enseignement
+    inno_peda: CodeScratchpad  # innovation_pedagogique
+    meth_ens: CodeScratchpad  # changements_methodes_d_enseignement
 
 
 # Function to analyze a segment using GPT-4o-mini with Structured Outputs
@@ -139,7 +139,10 @@ def process_task(task):
         result = analyze_segment(segment)
         if result:
             conn = sqlite3.connect(db_path)
-            save_result_to_db(conn, run_id, segment, result, intervenant_name, run_number, run_start_time)
+            try:
+                save_result_to_db(conn, run_id, segment, result, intervenant_name, run_number, run_start_time)
+            except Exception as e:
+                logger.error(f"Failed to save results to database: {e}")
             conn.close()
             return 1, 0, 1  # segments_processed, segments_failed, iterations_completed
         else:
@@ -203,7 +206,7 @@ def log_progress(file_name, segment_index, total_segments, iteration, total_iter
 if __name__ == "__main__":
     data_dir = find_most_recent_directory()
     db_path = initialize_db()
-    segments_processed, segments_failed, iterations_completed = process_files(data_dir, db_path, analyze_all=True, num_segments=20, num_iterations=10, max_workers=16)
+    segments_processed, segments_failed, iterations_completed = process_files(data_dir, db_path, analyze_all=True, num_segments=10, num_iterations=60, max_workers=16)
 
     # Afficher les statistiques finales
     end_time = time.time()

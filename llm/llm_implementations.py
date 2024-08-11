@@ -50,7 +50,6 @@ class OpenAILLM(LLMInterface):
             model=self.model,
             messages=messages,
             response_format=response_format,
-            temperature=0
         )
         return completion.choices[0].message.parsed
 

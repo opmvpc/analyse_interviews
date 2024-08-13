@@ -15,6 +15,7 @@ python-dotenv = "^1.0.1"
 rich = "^13.7.1"
 ollama = "^0.3.1"
 prettytable = "^3.10.2"
+matplotlib = "^3.9.1.post1"
 
 
 [build-system]

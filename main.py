@@ -206,7 +206,7 @@ def log_progress(file_name, segment_index, total_segments, iteration, total_iter
 if __name__ == "__main__":
     data_dir = find_most_recent_directory()
     db_path = initialize_db()
-    segments_processed, segments_failed, iterations_completed = process_files(data_dir, db_path, analyze_all=True, num_segments=10, num_iterations=60, max_workers=16)
+    segments_processed, segments_failed, iterations_completed = process_files(data_dir, db_path, analyze_all=True, num_segments=10, num_iterations=20, max_workers=16)
 
     # Afficher les statistiques finales
     end_time = time.time()

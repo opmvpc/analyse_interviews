@@ -4,8 +4,8 @@ Ce projet utilise GPT-4o-mini pour analyser des segments d'interviews en appliqu
 
 ## Prérequis
 
-- Python 3.x
-- Modules Python : `sqlite3`, `pandas`, `rich`, `openai`, `dotenv`, `pydantic`
+- Python 3.10 ou supérieur
+- `Poetry` pour la gestion des dépendances
 - Clé API OpenAI (à placer dans un fichier `.env`)
 
 ## Installation
@@ -17,14 +17,22 @@ Ce projet utilise GPT-4o-mini pour analyser des segments d'interviews en appliqu
    cd analyse_interviews
    ```
 
-2. Installez les dépendances Python :
+2. (Optionnel mais recommandé) Créez et activez un environnement virtuel :
 
    ```bash
-   pip install -r requirements.txt
+   python3.10 -m venv venv
+   source venv/bin/activate  # Sur Windows: venv\Scriptsctivate
    ```
 
-3. Créez un fichier `.env` à la racine du projet avec votre clé API OpenAI :
+3. Installez les dépendances Python avec `Poetry` :
+
+   ```bash
+   poetry install
    ```
+
+4. Créez un fichier `.env` à la racine du projet avec votre clé API OpenAI :
+
+   ```bash
    OPENAI_API_KEY=your_openai_api_key
    ```
 
@@ -40,13 +48,21 @@ python3 main.py
 
 ### 2. Visualisation des Résultats
 
-Utilisez le script `result.py` pour calculer et afficher les métriques LLMq et les segments de texte avec le plus de correspondances positives.
+Utilisez le script `results.py` pour calculer et afficher les métriques LLMq et les segments de texte avec le plus de correspondances positives.
 
 ```bash
-python3 result.py
+python3 results.py
 ```
 
-### 3. Paramètres du Script
+### 3. Génération de Graphiques
+
+Le script `generate_graphs.py` permet de générer des graphiques basés sur les résultats de l'analyse.
+
+```bash
+python3 generate_graphs.py
+```
+
+### 4. Paramètres du Script
 
 Vous pouvez modifier les paramètres par défaut directement dans le script `main.py` :
 
@@ -57,7 +73,8 @@ Vous pouvez modifier les paramètres par défaut directement dans le script `mai
 ## Structure des Fichiers
 
 - `main.py`: Script principal pour analyser les segments d'interviews.
-- `result.py`: Script pour visualiser les résultats de l'analyse.
+- `results.py`: Script pour visualiser les résultats de l'analyse.
+- `generate_graphs.py`: Script pour générer des graphiques à partir des résultats.
 - `results.db`: Base de données SQLite contenant les résultats de l'analyse.
 - `data/`: Dossier contenant les fichiers JSON des interviews à analyser.
 
